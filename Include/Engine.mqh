@@ -103,3 +103,25 @@ void Engine_OnTick(const string symbol)
   }
 
 #endif // __ENGINE_MQH__
+
+input ENUM_TIMEFRAMES InpHTF = PERIOD_M15;
+
+input ENUM_TIMEFRAMES InpStructTF = PERIOD_M5;
+
+input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M1;
+
+input int InpSwingLookback = 3;
+
+input int InpSwingHistoryCount = 300;
+
+input int InpMaxOBAgeBars = 80;
+
+input int InpMaxFVGAgeBars = 80;
+
+input int InpLiquidityLookback = 120;
+
+input int InpLiquidityTolPoints = 15;
+
+input bool InpUsePrevDayHiLo = true;
+
+input bool InpUsePrevSessionHiLo = true;
