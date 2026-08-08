@@ -4,7 +4,7 @@
 //| NO range filter / NO BOS / NO CHoCH / NO SMC                    |
 //+------------------------------------------------------------------+
 #property strict
-#property version "2.11"
+#property version "2.12"
 #include <Trade/Trade.mqh>
 CTrade trade;
 
@@ -19,12 +19,12 @@ input int InpMaxSpreadPoints=0;
 input int InpMaxConsecutiveErrors=3;
 input bool InpHaltOnInconsistentState=true;
 
-// V2 daily limits, account currency. 0 = disabled.
+// V2 daily stop limits, account currency. 0 = disabled.
+// As soon as the daily P&L reaches OR exceeds a limit, the EA stops.
 input double InpDailyProfitTarget=0.0;
-input double InpDailyProfitHardMax=0.0;
 input double InpDailyLossLimit=0.0;
 input bool InpCloseOnDailyProfit=true;
-input bool InpCloseOnDailyLoss=false;
+input bool InpCloseOnDailyLoss=true;
 
 // Optional limits, disabled by default to preserve V1 frequency.
 input int InpMaxTradesPerDay=0;
@@ -77,9 +77,11 @@ void ManageSell(){MqlTick t;if(!SymbolInfoTick(sym,t))return;if(lowest_since_ent
 
 void SyncPositionState(){if(state==STATE_HALT)return;ENUM_POSITION_TYPE pt;ulong ticket;bool has=HasOurPosition(pt,ticket);if(state==STATE_HALT)return;if(has){active_position_ticket=ticket;if(pt==POSITION_TYPE_BUY){if(state!=STATE_BUY){state=STATE_BUY;highest_since_entry=PositionGetDouble(POSITION_PRICE_OPEN);lowest_since_entry=0;DeletePending(ORDER_TYPE_BUY_STOP);}}else{if(state!=STATE_SELL){state=STATE_SELL;lowest_since_entry=PositionGetDouble(POSITION_PRICE_OPEN);highest_since_entry=0;DeletePending(ORDER_TYPE_SELL_STOP);}}return;}active_position_ticket=0;highest_since_entry=0;lowest_since_entry=0;int b=PendingCount(ORDER_TYPE_BUY_STOP),s=PendingCount(ORDER_TYPE_SELL_STOP);if(b>1||s>1){if(InpHaltOnInconsistentState)Halt("Duplicate pending orders detected");return;}if((b==1&&s==1)||(b==0&&s==0)){state=STATE_INIT;return;}if(InpHaltOnInconsistentState)Halt("Only one pending order exists without a position");}
 
-void ApplyDailyLimits(){if(state==STATE_HALT)return;double pnl=DailyPnL();string reason="";bool limit=false;bool close_position=false;if(InpDailyLossLimit>0&&pnl<=-InpDailyLossLimit){limit=true;reason="Daily loss limit reached";close_position=InpCloseOnDailyLoss;}else if(InpDailyProfitHardMax>0&&pnl>=InpDailyProfitHardMax){limit=true;reason="Daily profit hard cap reached";close_position=InpCloseOnDailyProfit;}else if(InpDailyProfitTarget>0&&pnl>=InpDailyProfitTarget){limit=true;reason="Daily profit target reached";close_position=InpCloseOnDailyProfit;}else if(InpMaxTradesPerDay>0&&day_trades>=InpMaxTradesPerDay){limit=true;reason="Maximum daily trades reached";close_position=false;}else if(InpMaxReversalsPerDay>0&&day_reversals>=InpMaxReversalsPerDay){limit=true;reason="Maximum daily reversals reached";close_position=false;}if(!limit)return;PrintFormat("[V2] %s | PnL=%.2f",reason,pnl);ENUM_POSITION_TYPE pt;ulong ticket;if(close_position&&HasOurPosition(pt,ticket)){if(!trade.PositionClose(ticket)||!TradeRetcodeOK()){RegisterError("Close position at daily limit");return;}ClearErrors();}DeletePending(ORDER_TYPE_BUY_STOP);DeletePending(ORDER_TYPE_SELL_STOP);Halt(reason);}
+// Daily protection: if P&L reaches OR exceeds a configured limit,
+// stop the whole cycle. Overshoot is allowed; exact equality is not required.
+void ApplyDailyLimits(){if(state==STATE_HALT)return;double pnl=DailyPnL();string reason="";bool limit=false;bool close_position=false;if(InpDailyLossLimit>0&&pnl<=-InpDailyLossLimit){limit=true;reason="Daily loss limit reached/exceeded";close_position=InpCloseOnDailyLoss;}else if(InpDailyProfitTarget>0&&pnl>=InpDailyProfitTarget){limit=true;reason="Daily profit target reached/exceeded";close_position=InpCloseOnDailyProfit;}else if(InpMaxTradesPerDay>0&&day_trades>=InpMaxTradesPerDay){limit=true;reason="Maximum daily trades reached";close_position=false;}else if(InpMaxReversalsPerDay>0&&day_reversals>=InpMaxReversalsPerDay){limit=true;reason="Maximum daily reversals reached";close_position=false;}if(!limit)return;PrintFormat("[V2] %s | PnL=%.2f",reason,pnl);DeletePending(ORDER_TYPE_BUY_STOP);DeletePending(ORDER_TYPE_SELL_STOP);if(close_position){ENUM_POSITION_TYPE pt;ulong ticket;if(HasOurPosition(pt,ticket)){if(!trade.PositionClose(ticket)||!TradeRetcodeOK()){RegisterError("Close position at daily limit");return;}ClearErrors();}}Halt(reason);}
 
-void HandleEntry(const MqlTradeTransaction &trans){if(trans.type!=TRADE_TRANSACTION_DEAL_ADD||trans.deal==0||!HistoryDealSelect(trans.deal))return;if(HistoryDealGetString(trans.deal,DEAL_SYMBOL)!=sym)return;if((ulong)HistoryDealGetInteger(trans.deal,DEAL_MAGIC)!=InpMagic)return;if(HistoryDealGetInteger(trans.deal,DEAL_ENTRY)!=DEAL_ENTRY_IN)return;long typ=HistoryDealGetInteger(trans.deal,DEAL_TYPE);double price=HistoryDealGetDouble(trans.deal,DEAL_PRICE);day_trades++;if(last_entry_time>0)day_reversals++;last_entry_time=TimeCurrent();if(typ==DEAL_TYPE_BUY){state=STATE_BUY;highest_since_entry=price;lowest_since_entry=0;DeletePending(ORDER_TYPE_BUY_STOP);}else if(typ==DEAL_TYPE_SELL){state=STATE_SELL;lowest_since_entry=price;highest_since_entry=0;DeletePending(ORDER_TYPE_SELL_STOP);}PrintFormat("[V2] ENTRY | trades=%d | reversals=%d | price=%.*f",day_trades,day_reversals,PriceDigits(),price);}
+void HandleEntry(const MqlTradeTransaction &trans){if(trans.type!=TRADE_TRANSACTION_DEAL_ADD||trans.deal==0||!HistoryDealSelect(trans.deal))return;if(HistoryDealGetString(trans.deal,DEAL_SYMBOL)!=sym)return;if((ulong)HistoryDealGetInteger(trans.deal,DEAL_MAGIC)!=InpMagic)return;if(HistoryDealGetInteger(trans.deal,DEAL_ENTRY)!=DEAL_ENTRY_IN)return;long typ=HistoryDealGetInteger(trans.deal,DEAL_TYPE);double price=HistoryDealGetDouble(trans.deal,DEAL_PRICE);day_trades++;if(last_entry_time>0)day_reversals++;last_entry_time=TimeCurrent();if(typ==DEAL_TYPE_BUY){state=STATE_BUY;highest_since_entry=price;lowest_since_entry=0;DeletePending(ORDER_TYPE_BUY_STOP);}else if(typ==DEAL_TYPE_SELL){state=STATE_SELL;lowest_since_entry=price;highest_since_entry=0;DeletePending(ORDER_TYPE_SELL_STOP);}PrintFormat("[V2] ENTRY | trades=%d | reversals=%d | price=%.*f",day_trades,day_reversals,PriceDigits(),price);ApplyDailyLimits();}
 
 int OnInit(){sym=(InpSymbol==""?_Symbol:InpSymbol);if(!SymbolSelect(sym,true))return INIT_FAILED;digits_count=(int)SymbolInfoInteger(sym,SYMBOL_DIGITS);point_size=SymbolInfoDouble(sym,SYMBOL_POINT);if(point_size<=0||InpLot<=0||InpInitialDistancePoints<=0||InpTrailDistancePoints<=0)return INIT_PARAMETERS_INCORRECT;trade.SetExpertMagicNumber(InpMagic);trade.SetAsyncMode(false);trade.SetTypeFillingBySymbol(sym);ResetDayIfNeeded();state=STATE_INIT;SyncPositionState();PrintFormat("[V2] READY | V1 core preserved | lot=%.2f | initial=%d pts | trail=%d pts",InpLot,InpInitialDistancePoints,InpTrailDistancePoints);Print("[V2] No range filter. No BOS/CHoCH/SMC. Only daily limits added.");return INIT_SUCCEEDED;}
 
