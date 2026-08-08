@@ -41,8 +41,8 @@ datetime last_action=0;
 // ---------- basic helpers ----------
 
 double P(){ return SymbolInfoDouble(sym,SYMBOL_POINT); }
-int Digits(){ return (int)SymbolInfoInteger(sym,SYMBOL_DIGITS); }
-double Norm(double price){ return NormalizeDouble(price,Digits()); }
+int PriceDigits(){ return (int)SymbolInfoInteger(sym,SYMBOL_DIGITS); }
+double Norm(double price){ return NormalizeDouble(price,PriceDigits()); }
 
 double Bid(){ return SymbolInfoDouble(sym,SYMBOL_BID); }
 double Ask(){ return SymbolInfoDouble(sym,SYMBOL_ASK); }
@@ -108,7 +108,7 @@ void Halt(string reason)
 
 // ---------- order/position discovery ----------
 
-int OurPendingCount(ENUM_ORDER_TYPE wanted=-1)
+int OurPendingCount(ENUM_ORDER_TYPE wanted=(ENUM_ORDER_TYPE)-1)
   {
    int n=0;
    for(int i=OrdersTotal()-1;i>=0;i--)
@@ -120,7 +120,7 @@ int OurPendingCount(ENUM_ORDER_TYPE wanted=-1)
       ENUM_ORDER_TYPE type=(ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
       if(type==ORDER_TYPE_BUY_STOP || type==ORDER_TYPE_SELL_STOP)
         {
-         if(wanted==-1 || type==wanted) n++;
+         if((int)wanted==-1 || type==wanted) n++;
         }
      }
    return n;
@@ -240,7 +240,7 @@ bool PlaceInitialPendings()
       return false;
      }
    ResetErrors();
-   PrintFormat("[V1] INITIALIZED | BuyStop=%.*f SellStop=%.*f",Digits(),buy,Digits(),sell);
+   PrintFormat("[V1] INITIALIZED | BuyStop=%.*f SellStop=%.*f",PriceDigits(),buy,PriceDigits(),sell);
    return true;
   }
 
@@ -419,7 +419,6 @@ bool ValidateState()
 
    if(pos==0 && pend==1)
      {
-      // A single pending without a position is ambiguous after restart or error.
       if(InpHaltOnStateMismatch)
         { Halt("orphan pending order"); return false; }
      }
@@ -436,9 +435,9 @@ void DetectNewSide()
 
    if(hasB && !hasS)
      {
-      if(state==STATE_SELL || state==STATE_INIT) { reversals += (state==STATE_SELL ? 1 : 0); }
+      if(state==STATE_SELL) reversals++;
       state=STATE_BUY;
-      if(extreme<=0 || state!=STATE_BUY) extreme=bp;
+      if(extreme<=0) extreme=bp;
       DeletePending(ORDER_TYPE_SELL_STOP);
       DeletePending(ORDER_TYPE_BUY_STOP);
       if(extreme<=0) extreme=bp;
@@ -490,7 +489,6 @@ void OnTick()
       return;
      }
 
-   // No position: only the exact initial two-pending state is accepted.
    if(OurPendingCount()==0)
      {
       extreme=0;
@@ -513,7 +511,6 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
   {
    if(halted) return;
    if(trans.symbol!=sym) return;
-   // Fast reaction: next tick reconciles exact broker state.
    if(trans.type==TRADE_TRANSACTION_DEAL_ADD || trans.type==TRADE_TRANSACTION_ORDER_ADD || trans.type==TRADE_TRANSACTION_ORDER_DELETE)
       PrintFormat("[V1][TRADE] transaction type=%d order=%I64u deal=%I64u",trans.type,trans.order,trans.deal);
   }
